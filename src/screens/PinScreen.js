@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert, StyleSheet, ActivityIndicator } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
+import { getSecure, setSecure } from '../utils/secureStorage';
 import { colors } from '../utils/colors';
 import { theme } from '../utils/theme';
 
 const KEY = 'avon_pin';
+const DEFAULT_PIN = '1234';
 
 export default function PinScreen({ onUnlocked, initialMode = 'auto' }) {
   const [mode, setMode] = useState('loading');
@@ -12,31 +13,23 @@ export default function PinScreen({ onUnlocked, initialMode = 'auto' }) {
   const [pin, setPin] = useState('');
   const [pin2, setPin2] = useState('');
   const [stored, setStored] = useState(null);
+  const [hasCustom, setHasCustom] = useState(false);
   const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     let mounted = true;
-    SecureStore.getItemAsync(KEY).then((savedPin) => {
+    getSecure(KEY).then((savedPin) => {
       if (!mounted) return;
-      setStored(savedPin);
-      setMode(initialMode === 'change' && savedPin ? 'change' : savedPin ? 'check' : 'create');
+      const effective = savedPin || DEFAULT_PIN;
+      setStored(effective);
+      setHasCustom(Boolean(savedPin));
+      setMode(initialMode === 'change' ? 'change' : 'check');
     }).catch((error) => {
       setLoadError(error.message);
       setMode('error');
     });
     return () => { mounted = false; };
   }, [initialMode]);
-
-  const create = async () => {
-    if (!/^\d{4}$/.test(pin)) return Alert.alert('Error', 'El PIN debe tener 4 dígitos');
-    if (pin !== pin2) return Alert.alert('Error', 'Los PIN no coinciden');
-    try {
-      await SecureStore.setItemAsync(KEY, pin);
-      onUnlocked();
-    } catch (error) {
-      Alert.alert('Error', `No se pudo guardar el PIN seguro: ${error.message}`);
-    }
-  };
 
   const check = async () => {
     if (pin === stored) onUnlocked();
@@ -48,7 +41,7 @@ export default function PinScreen({ onUnlocked, initialMode = 'auto' }) {
     if (!/^\d{4}$/.test(pin)) return Alert.alert('Error', 'El nuevo PIN debe tener 4 dígitos');
     if (pin !== pin2) return Alert.alert('Error', 'Los PIN no coinciden');
     try {
-      await SecureStore.setItemAsync(KEY, pin);
+      await setSecure(KEY, pin);
       Alert.alert('Listo', 'PIN actualizado');
       onUnlocked();
     } catch (error) {
@@ -70,12 +63,15 @@ export default function PinScreen({ onUnlocked, initialMode = 'auto' }) {
     );
   }
 
-  const title = mode === 'create' ? 'Crear PIN de 4 dígitos' : mode === 'change' ? 'Cambiar PIN de 4 dígitos' : 'Ingresa tu PIN';
+  const title = mode === 'change' ? 'Cambiar PIN de 4 dígitos' : 'Ingresa tu PIN';
 
   return (
     <View style={[theme.container, { justifyContent:'center' }]}>
       <View style={theme.card}>
         <Text style={styles.title}>{title}</Text>
+        {mode === 'check' && !hasCustom && (
+          <Text style={styles.hint}>PIN inicial: {DEFAULT_PIN} (puedes cambiarlo en Ajustes)</Text>
+        )}
         {mode === 'change' && (
           <>
             <Text style={styles.label}>PIN actual</Text>
@@ -84,13 +80,13 @@ export default function PinScreen({ onUnlocked, initialMode = 'auto' }) {
         )}
         <Text style={styles.label}>{mode === 'change' ? 'Nuevo PIN' : 'PIN'}</Text>
         <TextInput style={theme.input} keyboardType="number-pad" maxLength={4} secureTextEntry value={pin} onChangeText={value => setPin(value.replace(/\D/g, '').slice(0, 4))} />
-        {(mode === 'create' || mode === 'change') && (
+        {mode === 'change' && (
           <>
             <Text style={[styles.label, { marginTop:10 }]}>Confirmar PIN</Text>
             <TextInput style={theme.input} keyboardType="number-pad" maxLength={4} secureTextEntry value={pin2} onChangeText={value => setPin2(value.replace(/\D/g, '').slice(0, 4))} />
           </>
         )}
-        <TouchableOpacity style={[theme.bigBtn, { marginTop:16 }]} onPress={mode==='create'?create: mode==='change'?change: check}>
+        <TouchableOpacity style={[theme.bigBtn, { marginTop:16 }]} onPress={mode==='change'?change: check}>
           <Text style={theme.bigBtnText}>{mode==='check'?'Desbloquear':'Guardar'}</Text>
         </TouchableOpacity>
       </View>
@@ -101,5 +97,6 @@ export default function PinScreen({ onUnlocked, initialMode = 'auto' }) {
 const styles = StyleSheet.create({
   title: { fontSize:20, fontWeight:'900', color:colors.primaryDark, marginBottom:12 },
   label: { color:colors.subtext, fontWeight:'700', marginBottom:6 },
+  hint: { color:colors.primary, fontWeight:'800', marginBottom:10 },
   loading: { justifyContent:'center', alignItems:'center' },
 });

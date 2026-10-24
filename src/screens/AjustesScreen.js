@@ -70,7 +70,7 @@ export default function AjustesScreen() {
         <TouchableOpacity style={[theme.bigBtn, { marginTop:10, backgroundColor: colors.primaryDark }]} onPress={restore}>
           <Text style={theme.bigBtnText}>Restaurar desde JSON</Text>
         </TouchableOpacity>
-        <Text style={styles.hint}>El respaldo incluye productos, unidades, campañas e historial.</Text>
+        <Text style={styles.hint}>El respaldo incluye secciones, productos, unidades e historial (versión 2).</Text>
       </View>
 
       <Modal visible={showPin} animationType="slide" onRequestClose={() => setShowPin(false)}>

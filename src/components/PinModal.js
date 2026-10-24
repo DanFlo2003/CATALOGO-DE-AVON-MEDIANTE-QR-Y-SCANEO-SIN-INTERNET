@@ -16,7 +16,7 @@ export default function PinModal({ visible }) {
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex:1, backgroundColor:'#f7e6f3', justifyContent:'center', alignItems:'center' },
+  backdrop: { flex:1, backgroundColor:colors.accentLight, justifyContent:'center', alignItems:'center' },
   box: { alignItems:'center' },
   title: { fontSize:26, fontWeight:'900', color:colors.primaryDark },
   sub: { color:colors.subtext, marginTop:6 },

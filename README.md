@@ -1,6 +1,6 @@
 # Avon Catálogo
 
-Aplicación móvil Android para administrar productos, existencias por unidad, reservas, ventas, campañas y copias de seguridad. Los datos de catálogo se guardan localmente en SQLite; el PIN se protege con el almacenamiento seguro del sistema.
+Aplicación móvil Android para administrar productos organizados en secciones, existencias por unidad, reservas, ventas y copias de seguridad. Los datos de catálogo se guardan localmente en SQLite (base v2 con secciones); el PIN se protege con el almacenamiento seguro del sistema. Si existía una instalación anterior (base v1 con campañas), sus productos, unidades e historial se migran automáticamente a la sección "General" la primera vez que se abre la app; la base vieja se conserva intacta como respaldo.
 
 ## Requisitos
 
@@ -40,9 +40,12 @@ La primera configuración de EAS debe vincular el proyecto a una cuenta Expo y r
 
 ## Funciones
 
-- Productos buscables por código escrito o leído con cámara (EAN13, EAN8, UPC_A y QR).
-- Stock individual con estados disponible, reservado y vendido; permite guardar el nombre opcional del cliente al reservar.
-- Campañas, métricas por campaña, lista filtrable e historial de ventas.
+- Secciones con nombre e icono (perfumes, cremas, etc.) creadas desde la pestaña Secciones; cada sección lista sus productos con búsqueda por nombre o código y filtros por estado.
+- Agregar productos dentro de una sección por código escrito a mano o escaneado; si el código ya existe la app avisa "Ya está en inventario" y ofrece ver la ficha.
+- Ficha de producto con nombre, precio, cantidad de unidades, detalle, proveedor y sección; edición completa, eliminación y movimiento en lote de productos entre secciones.
+- Búsqueda global por código escrito o leído con cámara (EAN13, EAN8, UPC-A, UPC-E, Code128, Code39, Code93, ITF-14, Codabar, QR, DataMatrix y más).
+- Stock individual con estados disponible, reservado y vendido; permite guardar el nombre opcional del cliente al reservar y agregar más unidades en cualquier momento.
+- Métricas generales e historial de ventas.
 - PIN de cuatro dígitos guardado con `expo-secure-store`, con cambio protegido por el PIN actual.
-- Exportación de respaldo JSON y restauración con validación, confirmación y transacción SQLite.
+- Exportación de respaldo JSON (versión 2) y restauración con validación, confirmación y transacción SQLite.
 - Interfaz con componentes y estilos nativos de React Native.
