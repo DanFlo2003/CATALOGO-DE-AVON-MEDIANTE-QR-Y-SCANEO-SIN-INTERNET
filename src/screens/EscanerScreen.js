@@ -1,12 +1,15 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Modal, TextInput, Alert, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, TextInput, ScrollView, StyleSheet } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useApp } from '../context/AppContext';
 import { findProductByCode, createProductWithUnits, updateUnitState, addUnitsToProduct, getSections } from '../db/database';
 import { theme } from '../utils/theme';
 import { colors } from '../utils/colors';
+import { countUnits } from '../utils/helpers';
+import { showAlert } from '../utils/alerts';
 import UnitRow from '../components/UnitRow';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
+import BigButton from '../components/BigButton';
 
 export default function EscanerScreen() {
   const { refresh } = useApp();
@@ -22,13 +25,15 @@ export default function EscanerScreen() {
   const [adding, setAdding] = useState(false);
   const lookupInProgress = useRef(false);
 
+  const counts = found ? countUnits(found.units) : null;
+
   const loadSections = useCallback(async () => {
     try {
       const s = await getSections();
       setSections(s);
       setForm(f => (f.section_id && s.some(x => x.id === f.section_id)) ? f : { ...f, section_id: s[0]?.id || '' });
     } catch (error) {
-      Alert.alert('Error', `No se pudieron cargar las secciones: ${error.message}`);
+      showAlert('Error', `No se pudieron cargar las secciones: ${error.message}`);
     }
   }, []);
 
@@ -40,7 +45,7 @@ export default function EscanerScreen() {
     if (lookupInProgress.current) return;
     const normalizedCode = String(value || '').trim();
     if (!normalizedCode) {
-      Alert.alert('Código requerido', 'Escribe un código o escanéalo para buscar el producto.');
+      showAlert('Código requerido', 'Escribe un código o escanéalo para buscar el producto.');
       return;
     }
 
@@ -58,7 +63,7 @@ export default function EscanerScreen() {
         setShowNew(true);
       }
     } catch (error) {
-      Alert.alert('Error', `No se pudo buscar el producto: ${error.message}`);
+      showAlert('Error', `No se pudo buscar el producto: ${error.message}`);
     } finally {
       lookupInProgress.current = false;
       setLookingUp(false);
@@ -72,11 +77,12 @@ export default function EscanerScreen() {
 
   const create = async () => {
     const quantity = Number(form.qty);
-    const price = Number(form.price.replace(',', '.') || 0);
-    if (!form.section_id) return Alert.alert('Error', 'Selecciona una sección');
-    if (!form.name.trim()) return Alert.alert('Error', 'Ingresa el nombre del producto');
-    if (!Number.isInteger(quantity) || quantity < 1) return Alert.alert('Error', 'La cantidad debe ser un número entero mayor que cero');
-    if (!Number.isFinite(price) || price < 0) return Alert.alert('Error', 'Ingresa un precio válido');
+    const priceRaw = form.price.replace(',', '.').trim();
+    const price = Number(priceRaw);
+    if (!form.section_id) return showAlert('Error', 'Selecciona una sección');
+    if (!form.name.trim()) return showAlert('Error', 'Ingresa el nombre del producto');
+    if (!Number.isInteger(quantity) || quantity < 1) return showAlert('Error', 'La cantidad debe ser un número entero mayor que cero');
+    if (!priceRaw || !Number.isFinite(price) || price < 0) return showAlert('Error', 'El precio es obligatorio: ingresa un número mayor o igual a cero');
 
     try {
       await createProductWithUnits({
@@ -92,16 +98,16 @@ export default function EscanerScreen() {
       setFound(result);
       setShowNew(false);
       await refresh();
-      Alert.alert('Listo', 'Producto creado en su sección');
+      showAlert('Listo', 'Producto creado en su sección');
     } catch (error) {
-      Alert.alert('Error', `No se pudo guardar el producto: ${error.message}`);
+      showAlert('Error', `No se pudo guardar el producto: ${error.message}`);
     }
   };
 
   const addUnits = async () => {
     if (!found) return;
     const quantity = Number(addQty);
-    if (!Number.isInteger(quantity) || quantity < 1) return Alert.alert('Error', 'Ingresa una cantidad válida (entero mayor que cero)');
+    if (!Number.isInteger(quantity) || quantity < 1) return showAlert('Error', 'Ingresa una cantidad válida (entero mayor que cero)');
     try {
       setAdding(true);
       await addUnitsToProduct(found.product.id, quantity);
@@ -109,7 +115,7 @@ export default function EscanerScreen() {
       setAddQty('');
       await refresh();
     } catch (error) {
-      Alert.alert('Error', `No se pudieron agregar unidades: ${error.message}`);
+      showAlert('Error', `No se pudieron agregar unidades: ${error.message}`);
     } finally {
       setAdding(false);
     }
@@ -122,7 +128,7 @@ export default function EscanerScreen() {
       setFound(await findProductByCode(code));
       await refresh();
     } catch (error) {
-      Alert.alert('Error', `No se pudo actualizar la unidad: ${error.message}`);
+      showAlert('Error', `No se pudo actualizar la unidad: ${error.message}`);
     }
   };
 
@@ -150,12 +156,12 @@ export default function EscanerScreen() {
           onSubmitEditing={() => lookup()}
         />
         <View style={styles.actions}>
-          <TouchableOpacity style={[theme.bigBtn, styles.actionButton]} onPress={() => lookup()} disabled={lookingUp}>
-            <Text style={theme.bigBtnText}>{lookingUp ? 'Buscando...' : 'Buscar código'}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[theme.bigBtn, styles.actionButton, styles.scanButton]} onPress={() => setScannerOpen(true)}>
-            <Text style={theme.bigBtnText}>Escanear</Text>
-          </TouchableOpacity>
+          <BigButton style={styles.actionButton} onPress={() => lookup()} loading={lookingUp}>
+            {lookingUp ? 'Buscando...' : 'Buscar código'}
+          </BigButton>
+          <BigButton variant="dark" style={styles.actionButton} onPress={() => setScannerOpen(true)}>
+            📷 Escanear
+          </BigButton>
         </View>
         {lastScan ? <Text style={styles.lastScan}>Último código detectado: {lastScan}</Text> : null}
       </View>
@@ -166,10 +172,21 @@ export default function EscanerScreen() {
         onScan={handleScan}
       />
 
-      {found && (
+      {found && counts && (
         <View style={[theme.card, { marginTop: 12 }]}>
-          <Text style={styles.title}>Producto encontrado</Text>
+          <View style={styles.foundHeader}>
+            <Text style={styles.title}>Producto encontrado</Text>
+            <View style={styles.totalBadge}>
+              <Text style={styles.totalX}>×{counts.total}</Text>
+              <Text style={styles.totalLabel}>stock</Text>
+            </View>
+          </View>
           <Text style={styles.prod}>{found.product.name}</Text>
+          <View style={styles.stateRow}>
+            <Text style={[styles.statePill, { backgroundColor: '#e7f5ea', color: colors.available }]}>Disponibles {counts.disponible}</Text>
+            <Text style={[styles.statePill, { backgroundColor: '#fdf0dc', color: colors.reserved }]}>Reservados {counts.reservado}</Text>
+            <Text style={[styles.statePill, { backgroundColor: '#e3edf9', color: colors.sold }]}>Vendidos {counts.vendido}</Text>
+          </View>
           <Text style={styles.sub}>Código: {found.product.code}</Text>
           <Text style={styles.sub}>Precio: ${Number(found.product.price || 0).toFixed(2)}</Text>
           <Text style={styles.sub}>Sección: {found.product.section_emoji || '📦'} {found.product.section_name || '-'}</Text>
@@ -186,17 +203,17 @@ export default function EscanerScreen() {
               placeholder="Cant."
               maxLength={4}
             />
-            <TouchableOpacity style={[theme.bigBtn, styles.addBtn, styles.actionButton]} onPress={addUnits} disabled={adding}>
-              <Text style={theme.bigBtnText}>{adding ? 'Agregando...' : '+ Unidades'}</Text>
-            </TouchableOpacity>
+            <BigButton variant="dark" style={styles.addBtn} onPress={addUnits} loading={adding}>
+              {adding ? 'Agregando...' : '+ Unidades'}
+            </BigButton>
           </View>
         </View>
       )}
 
       {(found || code) && (
-        <TouchableOpacity style={[theme.bigBtn, styles.clearButton]} onPress={clearSearch}>
-          <Text style={theme.bigBtnText}>Limpiar búsqueda</Text>
-        </TouchableOpacity>
+        <BigButton variant="gray" style={styles.clearButton} onPress={clearSearch}>
+          Limpiar búsqueda
+        </BigButton>
       )}
 
       <Modal visible={showNew} transparent animationType="fade" onRequestClose={() => setShowNew(false)}>
@@ -228,12 +245,12 @@ export default function EscanerScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
-              <TouchableOpacity style={[theme.bigBtn, { marginTop: 14 }]} onPress={create}>
-                <Text style={theme.bigBtnText}>Guardar producto</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[theme.bigBtn, styles.cancelBtn]} onPress={() => setShowNew(false)}>
-                <Text style={theme.bigBtnText}>Cancelar</Text>
-              </TouchableOpacity>
+              <BigButton style={{ marginTop: 14 }} onPress={create}>
+                Guardar producto
+              </BigButton>
+              <BigButton variant="gray" style={{ marginTop: 8 }} onPress={() => setShowNew(false)}>
+                Cancelar
+              </BigButton>
             </View>
           </ScrollView>
         </View>
@@ -248,17 +265,29 @@ const styles = StyleSheet.create({
   sub: { color: colors.subtext, marginTop: 3 },
   label: { color: colors.subtext, fontWeight: '700', marginBottom: 6 },
   actions: { flexDirection: 'row', gap: 8, marginTop: 10 },
-  actionButton: { flex: 1, paddingHorizontal: 8 },
-  scanButton: { backgroundColor: colors.primaryDark },
+  actionButton: { flex: 1 },
   lastScan: { color: colors.available, fontWeight: '800', marginTop: 10 },
+  foundHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  totalBadge: {
+    backgroundColor: colors.accentLight,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    alignItems: 'center',
+  },
+  totalX: { fontSize: 18, fontWeight: '900', color: colors.primaryDark },
+  totalLabel: { fontSize: 10, fontWeight: '700', color: colors.subtext },
+  stateRow: { flexDirection: 'row', gap: 6, marginTop: 8, flexWrap: 'wrap' },
+  statePill: { fontWeight: '800', fontSize: 12, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, overflow: 'hidden' },
   addRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
   addInput: { width: 90 },
-  addBtn: { backgroundColor: colors.primaryDark },
-  clearButton: { marginTop: 12, marginBottom: 20, backgroundColor: colors.primaryDark },
+  addBtn: { flex: 1 },
+  clearButton: { marginTop: 12, marginBottom: 20 },
   backdrop: { flex: 1, backgroundColor: 'rgba(58,42,28,0.45)' },
   modalOuter: { flexGrow: 1, justifyContent: 'center', padding: 16 },
   modal: { backgroundColor: '#fff', borderRadius: 18, padding: 16 },
-  cancelBtn: { marginTop: 8, backgroundColor: '#9c9c9c' },
   sectionChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10,

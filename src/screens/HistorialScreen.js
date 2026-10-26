@@ -1,5 +1,6 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, FlatList, StyleSheet, Alert } from 'react-native';
+import { View, Text, FlatList, StyleSheet } from 'react-native';
+import { showAlert } from '../utils/alerts';
 import { useFocusEffect } from '@react-navigation/native';
 import { getSalesHistory } from '../db/database';
 import { theme } from '../utils/theme';
@@ -14,7 +15,7 @@ export default function HistorialScreen() {
       const h = await getSalesHistory();
       setHist(h);
     } catch (error) {
-      Alert.alert('Error', `No se pudo cargar el historial: ${error.message}`);
+      showAlert('Error', `No se pudo cargar el historial: ${error.message}`);
     }
   }, []);
 

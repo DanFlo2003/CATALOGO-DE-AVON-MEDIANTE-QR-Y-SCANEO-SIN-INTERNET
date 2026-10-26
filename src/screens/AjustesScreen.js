@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Alert, Modal, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, StyleSheet } from 'react-native';
+import { showAlert, showConfirm } from '../utils/alerts';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
@@ -23,10 +24,10 @@ export default function AjustesScreen() {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(path, { mimeType: 'application/json', dialogTitle: 'Compartir respaldo' });
       } else {
-        Alert.alert('Listo', 'Archivo guardado: ' + path);
+        showAlert('Listo', 'Archivo guardado: ' + path);
       }
     } catch (e) {
-      Alert.alert('Error', e.message);
+      showAlert('Error', e.message);
     }
   };
 
@@ -38,18 +39,15 @@ export default function AjustesScreen() {
       const content = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.UTF8 });
       const data = JSON.parse(content);
       validateBackup(data);
-      Alert.alert('Confirmar restauración', 'Esto REEMPLAZARÁ todos los datos actuales. ¿Continuar?', [
-        { text:'Cancelar', style:'cancel' },
-        { text:'Restaurar', style:'destructive', onPress: async () => {
-          try {
-            await importAll(data);
-            await refresh();
-            Alert.alert('Listo', 'Datos restaurados correctamente');
-          } catch (e2) { Alert.alert('Error', e2.message); }
-        }}
-      ]);
+      const ok = await showConfirm('Confirmar restauración', 'Esto REEMPLAZARÁ todos los datos actuales. ¿Continuar?', 'Restaurar', true);
+      if (!ok) return;
+      try {
+        await importAll(data);
+        await refresh();
+        showAlert('Listo', 'Datos restaurados correctamente');
+      } catch (e2) { showAlert('Error', e2.message); }
     } catch (e) {
-      Alert.alert('Error', e.message);
+      showAlert('Error', e.message);
     }
   };
 

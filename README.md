@@ -1,4 +1,4 @@
-# Avon Catálogo
+# GaeRomi
 
 Aplicación móvil Android para administrar productos organizados en secciones, existencias por unidad, reservas, ventas y copias de seguridad. Los datos de catálogo se guardan localmente en SQLite (base v2 con secciones); el PIN se protege con el almacenamiento seguro del sistema. Si existía una instalación anterior (base v1 con campañas), sus productos, unidades e historial se migran automáticamente a la sección "General" la primera vez que se abre la app; la base vieja se conserva intacta como respaldo.
 

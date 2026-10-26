@@ -1,5 +1,5 @@
 {
-  "name": "avon-catalogo",
+  "name": "gaeromi",
   "version": "1.0.0",
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -7,6 +7,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
+    "check": "node scripts/check.js",
     "prebuild": "expo prebuild",
     "build:apk:preview": "eas build -p android --profile preview",
     "build:apk:local": "eas build -p android --profile preview --local"
@@ -20,6 +21,7 @@
     "expo-camera": "~58.0.12",
     "expo-document-picker": "~58.0.4",
     "expo-file-system": "~58.0.10",
+    "expo-linear-gradient": "~58.0.3",
     "expo-secure-store": "~58.0.2",
     "expo-sharing": "~58.0.20",
     "expo-splash-screen": "~58.0.11",

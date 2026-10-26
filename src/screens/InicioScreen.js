@@ -9,8 +9,9 @@ export default function InicioScreen() {
   const { metrics } = useApp();
   return (
     <ScrollView style={theme.container} contentContainerStyle={{ paddingBottom: 20 }}>
-      <Text style={theme.header}>Inicio</Text>
-      <Text style={[styles.sub, { marginBottom: 10 }]}>Métricas generales</Text>
+      <Text style={theme.header}>GaeRomi</Text>
+      <Text style={styles.welcome}>Tu catálogo e inventario</Text>
+      <Text style={[styles.sub, { marginTop: 12, marginBottom: 10 }]}>Métricas generales</Text>
       <View style={styles.row}>
         <MetricCard title="DISPONIBLES" count={metrics.disponible} type="disponible" />
         <MetricCard title="RESERVADOS" count={metrics.reservado} type="reservado" />
@@ -27,6 +28,7 @@ export default function InicioScreen() {
 }
 
 const styles = StyleSheet.create({
+  welcome: { color: colors.subtext, fontWeight: '700', marginTop: -6 },
   sub: { fontSize: 16, fontWeight: '800', color: colors.primaryDark },
   row: { flexDirection: 'row', gap: 10 },
   infoTitle: { fontSize: 16, fontWeight: '900', color: colors.primaryDark },

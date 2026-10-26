@@ -71,6 +71,8 @@ const initDB = async (database) => {
 };
 
 // Migra (una sola vez) los datos de la base v1 (campañas) a la v2 (secciones).
+// El volcado es atómico: si algo falla a mitad, no se inserta nada y NO se marca
+// como completada, para reintentarse automáticamente en el próximo arranque.
 // La base vieja se conserva intacta en disco como copia de seguridad.
 const migrateFromV1 = async (database) => {
   const done = await database.getFirstAsync("SELECT value FROM meta WHERE key = 'migrated_v1'");
@@ -82,57 +84,64 @@ const migrateFromV1 = async (database) => {
       await finish();
       return;
     }
-    const old = await SQLite.openDatabaseAsync('avon_catalogo.db');
-    const hasTables = await old.getFirstAsync("SELECT name FROM sqlite_master WHERE type='table' AND name='products'");
-    if (!hasTables) {
-      await old.closeAsync();
+    let old = null;
+    try {
+      old = await SQLite.openDatabaseAsync('avon_catalogo.db');
+      const hasTables = await old.getFirstAsync("SELECT name FROM sqlite_master WHERE type='table' AND name='products'");
+      if (!hasTables) {
+        await finish();
+        return;
+      }
+
+      await database.withTransactionAsync(async () => {
+        await database.runAsync(
+          "INSERT OR IGNORE INTO sections (id,name,emoji,created_at) VALUES ('sec_general','General','📦',?)",
+          [nowISO()]
+        );
+
+        const validProducts = new Set((await database.getAllAsync('SELECT id FROM products')).map(r => r.id));
+        const usedCodes = new Set((await database.getAllAsync('SELECT code FROM products')).map(r => r.code));
+        for (const p of await old.getAllAsync('SELECT * FROM products')) {
+          if (typeof p.code !== 'string' || !p.code.trim() || typeof p.name !== 'string' || !p.name.trim()) continue;
+          if (usedCodes.has(p.code) || validProducts.has(p.id)) continue;
+          await database.runAsync(
+            'INSERT INTO products (id,code,name,price,detail,supplier,section_id,created_at) VALUES (?,?,?,?,?,?,?,?)',
+            [p.id, p.code, p.name, Number(p.price) || 0, null, null, 'sec_general', p.created_at || nowISO()]
+          );
+          validProducts.add(p.id);
+        }
+
+        const validUnits = new Set((await database.getAllAsync('SELECT id FROM units')).map(r => r.id));
+        for (const u of await old.getAllAsync('SELECT * FROM units')) {
+          if (!validProducts.has(u.product_id) || validUnits.has(u.id)) continue;
+          if (!['disponible', 'reservado', 'vendido'].includes(u.state)) continue;
+          await database.runAsync(
+            'INSERT INTO units (id,product_id,state,client_name,reserved_at,sold_at) VALUES (?,?,?,?,?,?)',
+            [u.id, u.product_id, u.state, u.client_name ?? null, u.reserved_at ?? null, u.sold_at ?? null]
+          );
+          validUnits.add(u.id);
+        }
+
+        const validSales = new Set((await database.getAllAsync('SELECT id FROM sales_log')).map(r => r.id));
+        for (const s of await old.getAllAsync('SELECT * FROM sales_log')) {
+          if (validSales.has(s.id) || !validProducts.has(s.product_id) || !validUnits.has(s.unit_id)) continue;
+          await database.runAsync(
+            'INSERT INTO sales_log (id,unit_id,product_id,client_name,price,sold_at) VALUES (?,?,?,?,?,?)',
+            [s.id, s.unit_id, s.product_id, s.client_name ?? null, Number(s.price) || 0, s.sold_at || nowISO()]
+          );
+          validSales.add(s.id);
+        }
+      });
+
       await finish();
-      return;
+    } finally {
+      if (old) {
+        try { await old.closeAsync(); } catch {}
+      }
     }
-
-    await database.runAsync(
-      "INSERT OR IGNORE INTO sections (id,name,emoji,created_at) VALUES ('sec_general','General','📦',?)",
-      [nowISO()]
-    );
-
-    const validProducts = new Set((await database.getAllAsync('SELECT id FROM products')).map(r => r.id));
-    const usedCodes = new Set((await database.getAllAsync('SELECT code FROM products')).map(r => r.code));
-    for (const p of await old.getAllAsync('SELECT * FROM products')) {
-      if (typeof p.code !== 'string' || !p.code.trim() || typeof p.name !== 'string' || !p.name.trim()) continue;
-      if (usedCodes.has(p.code) || validProducts.has(p.id)) continue;
-      await database.runAsync(
-        'INSERT INTO products (id,code,name,price,detail,supplier,section_id,created_at) VALUES (?,?,?,?,?,?,?,?)',
-        [p.id, p.code, p.name, Number(p.price) || 0, null, null, 'sec_general', p.created_at || nowISO()]
-      );
-      validProducts.add(p.id);
-    }
-
-    const validUnits = new Set((await database.getAllAsync('SELECT id FROM units')).map(r => r.id));
-    for (const u of await old.getAllAsync('SELECT * FROM units')) {
-      if (!validProducts.has(u.product_id) || validUnits.has(u.id)) continue;
-      if (!['disponible', 'reservado', 'vendido'].includes(u.state)) continue;
-      await database.runAsync(
-        'INSERT INTO units (id,product_id,state,client_name,reserved_at,sold_at) VALUES (?,?,?,?,?,?)',
-        [u.id, u.product_id, u.state, u.client_name ?? null, u.reserved_at ?? null, u.sold_at ?? null]
-      );
-      validUnits.add(u.id);
-    }
-
-    const validSales = new Set((await database.getAllAsync('SELECT id FROM sales_log')).map(r => r.id));
-    for (const s of await old.getAllAsync('SELECT * FROM sales_log')) {
-      if (validSales.has(s.id) || !validProducts.has(s.product_id) || !validUnits.has(s.unit_id)) continue;
-      await database.runAsync(
-        'INSERT INTO sales_log (id,unit_id,product_id,client_name,price,sold_at) VALUES (?,?,?,?,?,?)',
-        [s.id, s.unit_id, s.product_id, s.client_name ?? null, Number(s.price) || 0, s.sold_at || nowISO()]
-      );
-      validSales.add(s.id);
-    }
-
-    await old.closeAsync();
-    await finish();
   } catch (error) {
-    // Nunca bloquear el arranque por un fallo de migración; la base vieja queda como respaldo.
-    await finish();
+    // Falla la migración: no se marca como hecha (se reintenta en el próximo
+    // arranque) y no bloquea el inicio de la app.
   }
 };
 
@@ -171,12 +180,25 @@ export const updateSection = async ({ id, name, emoji }) => {
   if (result.changes === 0) throw new Error('La sección ya no existe');
 };
 
-export const deleteSection = async (id) => {
+export const deleteSection = async (id, moveToSectionId = null) => {
   if (id === 'sec_general') throw new Error('La sección General no se puede eliminar');
   const db = await getDB();
-  const c = await db.getFirstAsync('SELECT COUNT(*) as c FROM products WHERE section_id = ?', [id]);
-  if (c.c > 0) throw new Error('La sección tiene productos; muévelos a otra sección o elimínalos primero');
-  await db.runAsync('DELETE FROM sections WHERE id = ?', [id]);
+  const products = await db.getAllAsync('SELECT id FROM products WHERE section_id = ?', [id]);
+  if (products.length > 0 && !moveToSectionId) throw new Error('La sección tiene productos; indíca a qué sección moverlos');
+  if (moveToSectionId && moveToSectionId !== id) {
+    const dest = await db.getFirstAsync('SELECT id FROM sections WHERE id = ?', [moveToSectionId]);
+    if (!dest) throw new Error('La sección destino no existe');
+  }
+  await db.withTransactionAsync(async () => {
+    if (products.length > 0 && moveToSectionId && moveToSectionId !== id) {
+      const placeholders = products.map(() => '?').join(',');
+      await db.runAsync(
+        `UPDATE products SET section_id = ? WHERE id IN (${placeholders})`,
+        [moveToSectionId, ...products.map(p => p.id)]
+      );
+    }
+    await db.runAsync('DELETE FROM sections WHERE id = ?', [id]);
+  });
 };
 
 // Products + Units
@@ -210,14 +232,14 @@ export const createProductWithUnits = async ({ code, name, price, qty, detail = 
   if (dup) throw new Error('Ya existe un producto con ese código');
 
   const pid = 'prod_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-  await db.withExclusiveTransactionAsync(async (transaction) => {
-    await transaction.runAsync(
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
       'INSERT INTO products (id,code,name,price,detail,supplier,section_id,created_at) VALUES (?,?,?,?,?,?,?,?)',
       [pid, normalizedCode, normalizedName, productPrice, normalizedDetail, normalizedSupplier, section_id, nowISO()]
     );
     for (let i = 0; i < quantity; i++) {
       const unitId = 'unit_' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36) + i;
-      await transaction.runAsync(
+      await db.runAsync(
         'INSERT INTO units (id,product_id,state) VALUES (?, ?, ?)',
         [unitId, pid, 'disponible']
       );
@@ -262,9 +284,9 @@ export const moveProductsToSection = async (product_ids, section_id) => {
 
 export const deleteProduct = async (id) => {
   const db = await getDB();
-  await db.withExclusiveTransactionAsync(async (transaction) => {
-    await transaction.runAsync('DELETE FROM units WHERE product_id = ?', [id]);
-    await transaction.runAsync('DELETE FROM products WHERE id = ?', [id]);
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM units WHERE product_id = ?', [id]);
+    await db.runAsync('DELETE FROM products WHERE id = ?', [id]);
   });
 };
 
@@ -274,10 +296,10 @@ export const addUnitsToProduct = async (product_id, qty) => {
   const db = await getDB();
   const product = await db.getFirstAsync('SELECT id FROM products WHERE id = ?', [product_id]);
   if (!product) throw new Error('El producto ya no existe');
-  await db.withExclusiveTransactionAsync(async (transaction) => {
+  await db.withTransactionAsync(async () => {
     for (let i = 0; i < quantity; i++) {
       const unitId = 'unit_' + Math.random().toString(36).slice(2, 12) + Date.now().toString(36) + i;
-      await transaction.runAsync(
+      await db.runAsync(
         'INSERT INTO units (id,product_id,state) VALUES (?, ?, ?)',
         [unitId, product_id, 'disponible']
       );
@@ -294,16 +316,16 @@ export const updateUnitState = async ({ unit_id, state, client_name = null }) =>
     return;
   }
   if (state === 'vendido') {
-    await db.withExclusiveTransactionAsync(async (transaction) => {
-      const unit = await transaction.getFirstAsync('SELECT * FROM units WHERE id=?', [unit_id]);
+    await db.withTransactionAsync(async () => {
+      const unit = await db.getFirstAsync('SELECT * FROM units WHERE id=?', [unit_id]);
       if (!unit) throw new Error('La unidad ya no existe');
-      const product = await transaction.getFirstAsync('SELECT * FROM products WHERE id=?', [unit.product_id]);
+      const product = await db.getFirstAsync('SELECT * FROM products WHERE id=?', [unit.product_id]);
       if (!product) throw new Error('No se encontró el producto de esta unidad');
-      await transaction.runAsync(
+      await db.runAsync(
         'UPDATE units SET state=?, client_name=?, sold_at=?, reserved_at=NULL WHERE id=?',
         [state, client_name || unit.client_name || null, now, unit_id]
       );
-      await transaction.runAsync(
+      await db.runAsync(
         'INSERT INTO sales_log (id,unit_id,product_id,client_name,price,sold_at) VALUES (?,?,?,?,?,?)',
         ['sl_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36), unit_id, unit.product_id, client_name || unit.client_name || null, product.price || 0, now]
       );
@@ -445,32 +467,32 @@ export const importAll = async (data) => {
   validateBackup(data);
   const db = await getDB();
 
-  await db.withExclusiveTransactionAsync(async (transaction) => {
-    await transaction.runAsync('DELETE FROM sales_log');
-    await transaction.runAsync('DELETE FROM units');
-    await transaction.runAsync('DELETE FROM products');
-    await transaction.runAsync('DELETE FROM sections');
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM sales_log');
+    await db.runAsync('DELETE FROM units');
+    await db.runAsync('DELETE FROM products');
+    await db.runAsync('DELETE FROM sections');
 
     for (const section of data.sections) {
-      await transaction.runAsync(
+      await db.runAsync(
         'INSERT INTO sections (id,name,emoji,created_at) VALUES (?,?,?,?)',
         [section.id, section.name, section.emoji || '📦', section.created_at]
       );
     }
     for (const product of data.products) {
-      await transaction.runAsync(
+      await db.runAsync(
         'INSERT INTO products (id,code,name,price,detail,supplier,section_id,created_at) VALUES (?,?,?,?,?,?,?,?)',
         [product.id, product.code, product.name, product.price, product.detail ?? null, product.supplier ?? null, product.section_id, product.created_at]
       );
     }
     for (const unit of data.units) {
-      await transaction.runAsync(
+      await db.runAsync(
         'INSERT INTO units (id,product_id,state,client_name,reserved_at,sold_at) VALUES (?,?,?,?,?,?)',
         [unit.id, unit.product_id, unit.state, unit.client_name ?? null, unit.reserved_at ?? null, unit.sold_at ?? null]
       );
     }
     for (const sale of data.sales_log) {
-      await transaction.runAsync(
+      await db.runAsync(
         'INSERT INTO sales_log (id,unit_id,product_id,client_name,price,sold_at) VALUES (?,?,?,?,?,?)',
         [sale.id, sale.unit_id, sale.product_id, sale.client_name ?? null, sale.price, sale.sold_at]
       );

@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Modal, ScrollView, StyleSheet, Alert, TextInput } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Modal, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useApp } from '../context/AppContext';
 import {
@@ -13,6 +13,9 @@ import { colors } from '../utils/colors';
 import ProductCard from '../components/ProductCard';
 import UnitRow from '../components/UnitRow';
 import BarcodeScannerModal from '../components/BarcodeScannerModal';
+import BigButton from '../components/BigButton';
+import { showAlert, showConfirm } from '../utils/alerts';
+import { countUnits } from '../utils/helpers';
 
 const EMOJIS = ['📦', '💄', '🧴', '🌸', '✨', '🎁', '🧼', '💅', '👄', '👁️', '🛍️', '👑', '🌺', '🔥', '🌈'];
 
@@ -51,7 +54,7 @@ export default function SeccionesScreen() {
       const s = await getSections();
       setSections(s);
     } catch (error) {
-      Alert.alert('Error', `No se pudieron cargar las secciones: ${error.message}`);
+      showAlert('Error', `No se pudieron cargar las secciones: ${error.message}`);
     }
   }, []);
 
@@ -61,7 +64,7 @@ export default function SeccionesScreen() {
       const l = await getProductsList(sectionArg.id, filterArg);
       setList(l);
     } catch (error) {
-      Alert.alert('Error', `No se pudo cargar la lista: ${error.message}`);
+      showAlert('Error', `No se pudo cargar la lista: ${error.message}`);
     }
   }, [openSection, filter]);
 
@@ -88,7 +91,7 @@ export default function SeccionesScreen() {
   };
 
   const saveSection = async () => {
-    if (!secForm.name.trim()) return Alert.alert('Error', 'Ingresa el nombre de la sección');
+    if (!secForm.name.trim()) return showAlert('Error', 'Ingresa el nombre de la sección');
     try {
       setSaving(true);
       if (secForm.id) {
@@ -102,34 +105,44 @@ export default function SeccionesScreen() {
       setSecModal(false);
       await loadSections();
     } catch (error) {
-      Alert.alert('Error', `No se pudo guardar la sección: ${error.message}`);
+      showAlert('Error', `No se pudo guardar la sección: ${error.message}`);
     } finally {
       setSaving(false);
     }
   };
 
-  const confirmDeleteSection = () => {
-    Alert.alert(
+  const confirmDeleteSection = async () => {
+    const sectionId = secForm.id;
+    if (!sectionId) return;
+    if (sectionId === 'sec_general') {
+      showAlert('No permitido', 'La sección General no se puede eliminar.');
+      return;
+    }
+    let productCount = 0;
+    try {
+      productCount = (await getProductsList(sectionId, 'all')).length;
+    } catch (error) {
+      showAlert('Error', `No se pudo revisar la sección: ${error.message}`);
+      return;
+    }
+    const ok = await showConfirm(
       'Eliminar sección',
-      `¿Eliminar la sección "${secForm.name}"? Solo es posible si no tiene productos.`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteSection(secForm.id);
-              setSecModal(false);
-              if (openSection?.id === secForm.id) setOpenSection(null);
-              await loadSections();
-            } catch (error) {
-              Alert.alert('Error', error.message);
-            }
-          },
-        },
-      ]
+      productCount > 0
+        ? `La sección "${secForm.name}" tiene ${productCount} producto(s). Se moverán a la sección General y la sección se eliminará. ¿Continuar?`
+        : `¿Eliminar la sección "${secForm.name}"?`,
+      'Eliminar',
+      true
     );
+    if (!ok) return;
+    try {
+      await deleteSection(sectionId, productCount > 0 ? 'sec_general' : null);
+      setSecModal(false);
+      if (openSection?.id === sectionId) setOpenSection(null);
+      await loadSections();
+      if (productCount > 0) showAlert('Listo', 'Sección eliminada. Sus productos ahora están en General.');
+    } catch (error) {
+      showAlert('Error', error.message);
+    }
   };
 
   const enterSection = (section) => {
@@ -150,24 +163,19 @@ export default function SeccionesScreen() {
 
   const checkCode = async (rawValue) => {
     const code = String(rawValue || '').trim();
-    if (!code) return Alert.alert('Código requerido', 'Escribe el código o escanéalo.');
+    if (!code) return showAlert('Código requerido', 'Escribe el código o escanéalo.');
     try {
       const result = await findProductByCode(code);
       if (result) {
-        Alert.alert(
+        const verFicha = await showConfirm(
           'Ya está en inventario',
-          `El código ${code} ya existe: ${result.product.name} (sección ${result.product.section_name || '-'}).`,
-          [
-            { text: 'OK' },
-            {
-              text: 'Ver ficha',
-              onPress: () => {
-                setAddVisible(false);
-                openProduct(result.product);
-              },
-            },
-          ]
+          `El código ${code} ya existe: ${result.product.name} (sección ${result.product.section_name || '-'}). ¿Ver la ficha del producto?`,
+          'Ver ficha'
         );
+        if (verFicha) {
+          setAddVisible(false);
+          openProduct(result.product);
+        }
         return;
       }
       setAddCode(code);
@@ -175,16 +183,17 @@ export default function SeccionesScreen() {
       setAddVisible(false);
       setNewVisible(true);
     } catch (error) {
-      Alert.alert('Error', `No se pudo verificar el código: ${error.message}`);
+      showAlert('Error', `No se pudo verificar el código: ${error.message}`);
     }
   };
 
   const saveNew = async () => {
     const quantity = Number(newForm.qty);
-    const price = Number(newForm.price.replace(',', '.') || 0);
-    if (!newForm.name.trim()) return Alert.alert('Error', 'Ingresa el nombre del producto');
-    if (!Number.isInteger(quantity) || quantity < 1) return Alert.alert('Error', 'La cantidad debe ser un número entero mayor que cero');
-    if (!Number.isFinite(price) || price < 0) return Alert.alert('Error', 'Ingresa un precio válido');
+    const priceRaw = newForm.price.replace(',', '.').trim();
+    const price = Number(priceRaw);
+    if (!newForm.name.trim()) return showAlert('Error', 'Ingresa el nombre del producto');
+    if (!Number.isInteger(quantity) || quantity < 1) return showAlert('Error', 'La cantidad debe ser un número entero mayor que cero');
+    if (!priceRaw || !Number.isFinite(price) || price < 0) return showAlert('Error', 'El precio es obligatorio: ingresa un número mayor o igual a cero');
     try {
       setSaving(true);
       await createProductWithUnits({
@@ -198,9 +207,9 @@ export default function SeccionesScreen() {
       });
       setNewVisible(false);
       await reloadAll();
-      Alert.alert('Listo', 'Producto creado en la sección');
+      showAlert('Listo', 'Producto creado en la sección');
     } catch (error) {
-      Alert.alert('Error', `No se pudo guardar el producto: ${error.message}`);
+      showAlert('Error', `No se pudo guardar el producto: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -215,7 +224,7 @@ export default function SeccionesScreen() {
       setEditing(false);
       setAddQty('');
     } catch (error) {
-      Alert.alert('Error', `No se pudieron cargar las unidades: ${error.message}`);
+      showAlert('Error', `No se pudieron cargar las unidades: ${error.message}`);
     }
   };
 
@@ -232,7 +241,7 @@ export default function SeccionesScreen() {
       setUnits(await getUnitsByProduct(sel.id));
       await reloadAll();
     } catch (error) {
-      Alert.alert('Error', `No se pudo actualizar la unidad: ${error.message}`);
+      showAlert('Error', `No se pudo actualizar la unidad: ${error.message}`);
     }
   };
 
@@ -249,10 +258,11 @@ export default function SeccionesScreen() {
   };
 
   const saveEdit = async () => {
-    const price = Number(editForm.price.replace(',', '.') || 0);
-    if (!editForm.code.trim()) return Alert.alert('Error', 'El código es obligatorio');
-    if (!editForm.name.trim()) return Alert.alert('Error', 'El nombre es obligatorio');
-    if (!Number.isFinite(price) || price < 0) return Alert.alert('Error', 'Ingresa un precio válido');
+    const priceRaw = editForm.price.replace(',', '.').trim();
+    const price = Number(priceRaw);
+    if (!editForm.code.trim()) return showAlert('Error', 'El código es obligatorio');
+    if (!editForm.name.trim()) return showAlert('Error', 'El nombre es obligatorio');
+    if (!priceRaw || !Number.isFinite(price) || price < 0) return showAlert('Error', 'El precio es obligatorio: ingresa un número mayor o igual a cero');
     try {
       setSaving(true);
       await updateProduct({
@@ -268,7 +278,7 @@ export default function SeccionesScreen() {
       setEditing(false);
       await reloadAll();
     } catch (error) {
-      Alert.alert('Error', `No se pudo actualizar el producto: ${error.message}`);
+      showAlert('Error', `No se pudo actualizar el producto: ${error.message}`);
     } finally {
       setSaving(false);
     }
@@ -276,28 +286,27 @@ export default function SeccionesScreen() {
 
   const addUnits = async () => {
     const quantity = Number(addQty);
-    if (!Number.isInteger(quantity) || quantity < 1) return Alert.alert('Error', 'Ingresa una cantidad válida (entero mayor que cero)');
+    if (!Number.isInteger(quantity) || quantity < 1) return showAlert('Error', 'Ingresa una cantidad válida (entero mayor que cero)');
     try {
       setSaving(true);
       await addUnitsToProduct(sel.id, quantity);
       setAddQty('');
       await reloadUnits();
     } catch (error) {
-      Alert.alert('Error', `No se pudieron agregar unidades: ${error.message}`);
+      showAlert('Error', `No se pudieron agregar unidades: ${error.message}`);
     } finally {
       setSaving(false);
     }
   };
 
-  const confirmDelete = () => {
-    Alert.alert(
+  const confirmDelete = async () => {
+    const ok = await showConfirm(
       'Eliminar producto',
       `Se eliminarán "${sel.name}" y todas sus unidades. Las ventas registradas se conservan en el historial.`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Eliminar', style: 'destructive', onPress: remove },
-      ]
+      'Eliminar',
+      true
     );
+    if (ok) remove();
   };
 
   const remove = async () => {
@@ -306,7 +315,7 @@ export default function SeccionesScreen() {
       setSel(null);
       await reloadAll();
     } catch (error) {
-      Alert.alert('Error', `No se pudo eliminar el producto: ${error.message}`);
+      showAlert('Error', `No se pudo eliminar el producto: ${error.message}`);
     }
   };
 
@@ -332,9 +341,9 @@ export default function SeccionesScreen() {
       setMoveVisible(false);
       exitSelect();
       await reloadAll();
-      Alert.alert('Listo', `${n} producto(s) movidos a ${section.name}`);
+      showAlert('Listo', `${n} producto(s) movidos a ${section.name}`);
     } catch (error) {
-      Alert.alert('Error', error.message);
+      showAlert('Error', error.message);
     } finally {
       setMoving(false);
     }
@@ -403,13 +412,13 @@ export default function SeccionesScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
-              <TouchableOpacity style={[theme.bigBtn, { marginTop: 14 }]} onPress={saveSection} disabled={saving}>
-                <Text style={theme.bigBtnText}>{saving ? 'Guardando...' : 'Guardar'}</Text>
-              </TouchableOpacity>
+              <BigButton style={{ marginTop: 14 }} onPress={saveSection}>
+                {saving ? 'Guardando...' : 'Guardar'}
+              </BigButton>
               {secForm.id && (
-                <TouchableOpacity style={[theme.bigBtn, styles.dangerBtn]} onPress={confirmDeleteSection}>
-                  <Text style={theme.bigBtnText}>Eliminar sección</Text>
-                </TouchableOpacity>
+                <BigButton variant="danger" style={styles.dangerBtn} onPress={confirmDeleteSection}>
+                  Eliminar sección
+                </BigButton>
               )}
               <TouchableOpacity style={[theme.bigBtn, styles.cancelBtn]} onPress={() => setSecModal(false)}>
                 <Text style={theme.bigBtnText}>Cancelar</Text>
@@ -453,9 +462,9 @@ export default function SeccionesScreen() {
         </View>
       ) : (
         <View style={styles.actionRow}>
-          <TouchableOpacity style={[theme.bigBtn, { flex: 1, backgroundColor: colors.primaryDark, paddingVertical: 14 }]} onPress={startAdd}>
-            <Text style={theme.bigBtnText}>＋ Agregar producto</Text>
-          </TouchableOpacity>
+          <BigButton variant="dark" style={{ flex: 1 }} onPress={startAdd}>
+            ＋ Agregar producto
+          </BigButton>
           <TouchableOpacity style={styles.moveToggle} onPress={startSelect}>
             <Text style={{ fontSize: 20 }}>☰</Text>
           </TouchableOpacity>
@@ -498,12 +507,12 @@ export default function SeccionesScreen() {
               onChangeText={setAddCode}
               maxLength={64}
             />
-            <TouchableOpacity style={[theme.bigBtn, { marginTop: 12 }]} onPress={() => checkCode(addCode)}>
-              <Text style={theme.bigBtnText}>Continuar</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[theme.bigBtn, styles.scanBtn]} onPress={() => setScanVisible(true)}>
-              <Text style={theme.bigBtnText}>Escanear código</Text>
-            </TouchableOpacity>
+            <BigButton style={{ marginTop: 12 }} onPress={() => checkCode(addCode)}>
+              Continuar
+            </BigButton>
+            <BigButton variant="dark" style={styles.scanBtn} onPress={() => setScanVisible(true)}>
+              📷 Escanear código
+            </BigButton>
             <TouchableOpacity style={[theme.bigBtn, styles.cancelBtn]} onPress={() => setAddVisible(false)}>
               <Text style={theme.bigBtnText}>Cancelar</Text>
             </TouchableOpacity>
@@ -536,9 +545,9 @@ export default function SeccionesScreen() {
               <TextInput style={theme.input} value={newForm.detail} onChangeText={value => setNewForm({ ...newForm, detail: value })} placeholder="Ej. 250 ml, tono rosado..." />
               <Text style={[theme.label, { marginTop: 10 }]}>Proveedor (opcional)</Text>
               <TextInput style={theme.input} value={newForm.supplier} onChangeText={value => setNewForm({ ...newForm, supplier: value })} />
-              <TouchableOpacity style={[theme.bigBtn, { marginTop: 14 }]} onPress={saveNew} disabled={saving}>
-                <Text style={theme.bigBtnText}>{saving ? 'Guardando...' : 'Guardar producto'}</Text>
-              </TouchableOpacity>
+              <BigButton style={{ marginTop: 14 }} onPress={saveNew} loading={saving}>
+                {saving ? 'Guardando...' : 'Guardar producto'}
+              </BigButton>
               <TouchableOpacity style={[theme.bigBtn, styles.cancelBtn]} onPress={() => setNewVisible(false)}>
                 <Text style={theme.bigBtnText}>Cancelar</Text>
               </TouchableOpacity>
@@ -569,8 +578,19 @@ export default function SeccionesScreen() {
       {/* Modal ficha de producto */}
       <Modal visible={!!sel} animationType="slide" onRequestClose={() => setSel(null)}>
         <View style={theme.container}>
-          <Text style={theme.header}>{sel?.name}</Text>
+          <View style={styles.foundHeader}>
+            <Text style={theme.header}>{sel?.name}</Text>
+            <View style={styles.totalBadge}>
+              <Text style={styles.totalX}>×{countUnits(units).total}</Text>
+              <Text style={styles.totalLabel}>stock</Text>
+            </View>
+          </View>
           <Text style={styles.code}>Código: {sel?.code} | Precio: ${Number(sel?.price || 0).toFixed(2)}</Text>
+          <View style={styles.stateRow}>
+            <Text style={[styles.statePill, { backgroundColor: '#e7f5ea', color: colors.available }]}>Disponibles {countUnits(units).disponible}</Text>
+            <Text style={[styles.statePill, { backgroundColor: '#fdf0dc', color: colors.reserved }]}>Reservados {countUnits(units).reservado}</Text>
+            <Text style={[styles.statePill, { backgroundColor: '#e3edf9', color: colors.sold }]}>Vendidos {countUnits(units).vendido}</Text>
+          </View>
           {!!sel?.detail && <Text style={styles.code}>Detalle: {sel.detail}</Text>}
           {!!sel?.supplier && <Text style={styles.code}>Proveedor: {sel.supplier}</Text>}
 
@@ -599,9 +619,9 @@ export default function SeccionesScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
-              <TouchableOpacity style={[theme.bigBtn, { marginTop: 14 }]} onPress={saveEdit} disabled={saving}>
-                <Text style={theme.bigBtnText}>{saving ? 'Guardando...' : 'Guardar cambios'}</Text>
-              </TouchableOpacity>
+              <BigButton style={{ marginTop: 14 }} onPress={saveEdit} loading={saving}>
+                {saving ? 'Guardando...' : 'Guardar cambios'}
+              </BigButton>
               <TouchableOpacity style={[theme.bigBtn, styles.cancelBtn]} onPress={() => setEditing(false)}>
                 <Text style={theme.bigBtnText}>Cancelar</Text>
               </TouchableOpacity>
@@ -609,12 +629,12 @@ export default function SeccionesScreen() {
           ) : (
             <>
               <View style={styles.modalActions}>
-                <TouchableOpacity style={[theme.bigBtn, styles.editBtn]} onPress={startEdit}>
-                  <Text style={theme.bigBtnText}>Editar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[theme.bigBtn, styles.deleteBtn]} onPress={confirmDelete}>
-                  <Text style={theme.bigBtnText}>Eliminar</Text>
-                </TouchableOpacity>
+                <BigButton style={{ flex: 1 }} onPress={startEdit}>
+                  Editar
+                </BigButton>
+                <BigButton variant="danger" style={{ flex: 1 }} onPress={confirmDelete}>
+                  Eliminar
+                </BigButton>
               </View>
               <View style={styles.addRow}>
                 <TextInput
@@ -625,9 +645,9 @@ export default function SeccionesScreen() {
                   placeholder="Cant."
                   maxLength={4}
                 />
-                <TouchableOpacity style={[theme.bigBtn, styles.addBtn]} onPress={addUnits} disabled={saving}>
-                  <Text style={theme.bigBtnText}>{saving ? '...' : '+ Unidades'}</Text>
-                </TouchableOpacity>
+                <BigButton variant="dark" style={styles.addBtn} onPress={addUnits} loading={saving}>
+                  {saving ? '...' : '+ Unidades'}
+                </BigButton>
               </View>
               <ScrollView style={{ marginTop: 10 }}>
                 {units.map(u => <UnitRow key={u.id} unit={u} onChange={change} />)}
@@ -697,6 +717,20 @@ const styles = StyleSheet.create({
   moveItem: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.border },
   moveItemText: { fontSize: 16, fontWeight: '700', color: colors.text },
   code: { color: colors.subtext },
+  foundHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  totalBadge: {
+    backgroundColor: colors.accentLight,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    alignItems: 'center',
+  },
+  totalX: { fontSize: 18, fontWeight: '900', color: colors.primaryDark },
+  totalLabel: { fontSize: 10, fontWeight: '700', color: colors.subtext },
+  stateRow: { flexDirection: 'row', gap: 6, marginTop: 6, flexWrap: 'wrap' },
+  statePill: { fontWeight: '800', fontSize: 12, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3, overflow: 'hidden' },
   modalActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
   editBtn: { flex: 1, backgroundColor: colors.primary, paddingVertical: 12 },
   deleteBtn: { flex: 1, backgroundColor: colors.danger, paddingVertical: 12 },

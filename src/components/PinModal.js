@@ -7,7 +7,7 @@ export default function PinModal({ visible }) {
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.backdrop}>
         <View style={styles.box}>
-          <Text style={styles.title}>Avon Catálogo</Text>
+          <Text style={styles.title}>GaeRomi</Text>
           <Text style={styles.sub}>Protegido con PIN</Text>
         </View>
       </View>

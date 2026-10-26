@@ -3,6 +3,14 @@ export const formatMoney = (v) => {
   return `$${n.toFixed(2)}`;
 };
 
+export const countUnits = (units) => {
+  const c = { total: Array.isArray(units) ? units.length : 0, disponible: 0, reservado: 0, vendido: 0 };
+  for (const u of units || []) {
+    if (c[u.state] !== undefined) c[u.state]++;
+  }
+  return c;
+};
+
 export const nowISO = () => new Date().toISOString();
 
 export const uid = () => {
